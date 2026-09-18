@@ -1,0 +1,427 @@
+#include <QApplication>
+#include <QFile>
+#include <QTextBrowser>
+#include <QMessageBox>
+#include <QRegularExpression>
+#include <QStringList>
+
+
+// Экранируем HTML-символы
+QString escapeHtml(const QString &text)
+{
+    return text.toHtmlEscaped();
+}
+
+
+// Простейший Markdown -> HTML
+QString markdownToHtml(const QString &markdown)
+{
+    const QStringList lines = markdown.split('\n');
+
+    QString html;
+
+    html += "<html><head>";
+    html += "<meta charset=\"utf-8\">";
+    html += "<style>";
+
+    html += "body {"
+            "font-family: Arial;"
+            "font-size: 14pt;"
+            "margin: 20px;"
+            "}";
+
+    html += "h1 { font-size: 28pt; }";
+    html += "h2 { font-size: 22pt; }";
+    html += "h3 { font-size: 18pt; }";
+
+    html += "code {"
+            "font-family: Consolas, monospace;"
+            "background: #eeeeee;"
+            "padding: 2px 4px;"
+            "}";
+
+    html += "pre {"
+            "font-family: Consolas, monospace;"
+            "background: #eeeeee;"
+            "padding: 12px;"
+            "}";
+
+    html += "blockquote {"
+            "margin-left: 20px;"
+            "padding-left: 10px;"
+            "border-left: 4px solid #999999;"
+            "color: #555555;"
+            "}";
+
+    html += "</style>";
+    html += "</head><body>";
+
+
+    bool codeBlock = false;
+
+    for (QString line : lines)
+    {
+        // ----------------------------------------
+        // Блок кода ```
+        // ----------------------------------------
+
+        if (line.trimmed().startsWith("```"))
+        {
+            if (!codeBlock)
+            {
+                codeBlock = true;
+                html += "<pre>";
+            }
+            else
+            {
+                codeBlock = false;
+                html += "</pre>";
+            }
+
+            continue;
+        }
+
+        // Если сейчас внутри блока кода
+        if (codeBlock)
+        {
+            html += escapeHtml(line);
+            html += "\n";
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Пустая строка
+        // ----------------------------------------
+
+        if (line.trimmed().isEmpty())
+        {
+            html += "<br>";
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Заголовки
+        // ----------------------------------------
+
+        if (line.startsWith("### "))
+        {
+            QString text = line.mid(4);
+            html += "<h3>" + escapeHtml(text) + "</h3>";
+            continue;
+        }
+
+        if (line.startsWith("## "))
+        {
+            QString text = line.mid(3);
+            html += "<h2>" + escapeHtml(text) + "</h2>";
+            continue;
+        }
+
+        if (line.startsWith("# "))
+        {
+            QString text = line.mid(2);
+            html += "<h1>" + escapeHtml(text) + "</h1>";
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Горизонтальная линия
+        // ----------------------------------------
+
+        QString trimmed = line.trimmed();
+
+        if (trimmed == "---" ||
+            trimmed == "***" ||
+            trimmed == "___")
+        {
+            html += "<hr>";
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Цитата
+        // ----------------------------------------
+
+        if (trimmed.startsWith("> "))
+        {
+            QString text = trimmed.mid(2);
+
+            html += "<blockquote>";
+            html += formatInline(text);
+            html += "</blockquote>";
+
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Маркированный список
+        // ----------------------------------------
+
+        if (trimmed.startsWith("- ") ||
+            trimmed.startsWith("* "))
+        {
+            QString text = trimmed.mid(2);
+
+            html += "<ul>";
+            html += "<li>";
+            html += formatInline(text);
+            html += "</li>";
+            html += "</ul>";
+
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Нумерованный список
+        // ----------------------------------------
+
+        QRegularExpression numberList(
+            "^\\d+\\.\\s+(.*)$"
+        );
+
+        QRegularExpressionMatch match =
+            numberList.match(trimmed);
+
+        if (match.hasMatch())
+        {
+            QString text = match.captured(1);
+
+            html += "<ol>";
+            html += "<li>";
+            html += formatInline(text);
+            html += "</li>";
+            html += "</ol>";
+
+            continue;
+        }
+
+
+        // ----------------------------------------
+        // Обычный текст
+        // ----------------------------------------
+
+        html += "<p>";
+        html += formatInline(line);
+        html += "</p>";
+    }
+
+
+    html += "</body></html>";
+
+    return html;
+}
+
+
+// Форматирование внутри строки:
+// **жирный**
+// *курсив*
+// `код`
+// [ссылка](url)
+QString formatInline(const QString &text)
+{
+    QString result = escapeHtml(text);
+
+
+    // ----------------------------------------
+    // Ссылки
+    // [Google](https://google.com)
+    // ----------------------------------------
+
+    QRegularExpression links(
+        R"(\[([^\]]+)\]\(([^)]+)\))"
+    );
+
+    result.replace(
+        links,
+        "<a href=\"\\2\">\\1</a>"
+    );
+
+
+    // ----------------------------------------
+    // `код`
+    // ----------------------------------------
+
+    QRegularExpression code(
+        R"(`([^`]+)`)"
+    );
+
+    result.replace(
+        code,
+        "<code>\\1</code>"
+    );
+
+
+    // ----------------------------------------
+    // **жирный**
+    // ----------------------------------------
+
+    QRegularExpression bold(
+        R"(\*\*([^*]+)\*\*)"
+    );
+
+    result.replace(
+        bold,
+        "<b>\\1</b>"
+    );
+
+
+    // ----------------------------------------
+    // __жирный__
+    // ----------------------------------------
+
+    QRegularExpression bold2(
+        R"(__([^_]+)__)"
+    );
+
+    result.replace(
+        bold2,
+        "<b>\\1</b>"
+    );
+
+
+    // ----------------------------------------
+    // *курсив*
+    // ----------------------------------------
+
+    QRegularExpression italic(
+        R"(\*([^*]+)\*)"
+    );
+
+    result.replace(
+        italic,
+        "<i>\\1</i>"
+    );
+
+
+    // ----------------------------------------
+    // _курсив_
+    // ----------------------------------------
+
+    QRegularExpression italic2(
+        R"(_([^_]+)_)"
+    );
+
+    result.replace(
+        italic2,
+        "<i>\\1</i>"
+    );
+
+
+    return result;
+}
+
+
+int main(int argc, char *argv[])
+{
+    QApplication app(argc, argv);
+
+
+    // ----------------------------------------
+    // Проверяем аргументы командной строки
+    // ----------------------------------------
+
+    if (argc < 2)
+    {
+        QMessageBox::critical(
+            nullptr,
+            "Ошибка",
+            "Не указан Markdown-файл.\n\n"
+            "Использование:\n"
+            "myCode.exe <file.md>"
+        );
+
+        return 1;
+    }
+
+
+    // ----------------------------------------
+    // Получаем имя файла
+    // ----------------------------------------
+
+    QString fileName =
+        QString::fromLocal8Bit(argv[1]);
+
+
+    // ----------------------------------------
+    // Открываем файл
+    // ----------------------------------------
+
+    QFile file(fileName);
+
+    if (!file.open(
+            QIODevice::ReadOnly |
+            QIODevice::Text))
+    {
+        QMessageBox::critical(
+            nullptr,
+            "Ошибка",
+            QString(
+                "Не удалось открыть файл:\n\n%1\n\n%2"
+            )
+            .arg(fileName)
+            .arg(file.errorString())
+        );
+
+        return 1;
+    }
+
+
+    // ----------------------------------------
+    // Читаем UTF-8
+    // ----------------------------------------
+
+    QString markdown =
+        QString::fromUtf8(file.readAll());
+
+    file.close();
+
+
+    // ----------------------------------------
+    // Создаём окно
+    // ----------------------------------------
+
+    QTextBrowser browser;
+
+    browser.setWindowTitle(
+        QString("Markdown — %1").arg(fileName)
+    );
+
+    browser.resize(1000, 700);
+
+    browser.setOpenExternalLinks(true);
+
+    browser.setHtml(
+        markdownToHtml(markdown)
+    );
+
+    browser.show();
+
+
+    return app.exec();
+}
+
+
+
+cmake
+cmake_minimum_required(VERSION 3.16)
+
+project(myCode LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
+
+add_executable(myCode
+    main.cpp
+)
+
+target_link_libraries(myCode PRIVATE
+    Qt5::Widgets
+)
